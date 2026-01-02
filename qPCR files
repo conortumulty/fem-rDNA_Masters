@@ -1,0 +1,520 @@
+library(readr)
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+
+qPCR_combined <- read_csv(
+  "~/Library/CloudStorage/OneDrive-UniversityofOtago/2025/qPCR/Combined_qPCR_amplicon_02Dec.csv"
+)
+
+# Convert I_Proportion to numeric
+qPCR_combined$I_Proportion <- as.numeric(qPCR_combined$I_Proportion)
+
+# ---------------------------
+# Define colours
+# ---------------------------
+sex_cols <- c(
+  "Male"   = "#2F3D70",
+  "Female" = "#D04E59",
+  "NA"     = "#FAE093"
+)
+
+# ---------------------------
+# A theme to centre titles and scale text
+# ---------------------------
+big_theme <- theme_minimal(base_size = 14) +
+  theme(
+    plot.title   = element_text(size = 20, face = "bold", hjust = 0.5),
+    axis.title   = element_text(size = 18, face = "bold"),
+    axis.text    = element_text(size = 18),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text  = element_text(size = 12)
+  )
+
+# ---------------------------
+# Helper: make R² + p text for a given dataset
+# ---------------------------
+lm_stats_label <- function(df) {
+  df_use <- df[is.finite(df$I_Proportion) &
+                 !is.na(df$I_Proportion) &
+                 !is.na(df$`Combined estimate`), ]
+  if (nrow(df_use) < 2) return("n too small")
+  
+  fit <- lm(`Combined estimate` ~ I_Proportion, data = df_use)
+  r2  <- summary(fit)$r.squared
+  p   <- summary(fit)$coefficients[2, 4]
+  paste0("R² = ", round(r2, 3), "\n p = ", signif(p, 3))
+}
+
+# ---------------------------
+# Overview plot: Reference Conformity vs Copy Number
+# (Read_count > 250, x = Copy number log10)
+# ---------------------------
+ggplot(
+  dplyr::filter(qPCR_combined, Read_count > 250),
+  aes(
+    x = `Combined estimate`,
+    y = I_Proportion,
+    colour = `Sex phenotype`
+  )
+) +
+  geom_point(size = 3) +
+  scale_color_manual(
+    values = sex_cols,
+    na.value = "#FAE093"
+  ) +
+  scale_x_log10() +
+  labs(
+    x = "Copy number  (log scale)",
+    y = "Reference conformity",
+    colour = "Sex phenotype",
+    title = "Reference Conformity vs Copy Number"
+  ) +
+  geom_text_repel(
+    data = subset(qPCR_combined, `Combined estimate` < 2.5 & Read_count > 250),
+    aes(label = Individual),
+    size = 4,
+    nudge_y = 0.02,
+    max.overlaps = Inf
+  ) +
+  big_theme
+
+# =====================================================
+# Generic helper for Copy Number vs Reference Conformity
+# (x fixed 0–100, y fixed log10 0.1–100)
+# =====================================================
+plot_cn_vs_conformity <- function(df, plot_title) {
+  stats_lab <- lm_stats_label(df)
+  
+  ggplot(df, aes(
+    x = I_Proportion,
+    y = `Combined estimate`,
+    colour = `Sex phenotype`
+  )) +
+    geom_point(size = 3) +
+    geom_smooth(method = "lm", se = FALSE, colour = "black", linewidth = 1) +
+    scale_color_manual(
+      values = sex_cols,
+      na.value = "#FAE093"
+    ) +
+    scale_x_continuous(limits = c(0, 100)) +
+    scale_y_log10(limits = c(0.1, 100)) +
+    labs(
+      x = "Reference conformity",
+      y = "Copy number (log scale)",
+      colour = "Sex phenotype",
+      title = plot_title
+    ) +
+    annotate(
+      "text",
+      x = 0,
+      y = 100,
+      label = stats_lab,
+      hjust = 0,
+      vjust = 1,
+      size = 8,          # bigger
+      fontface = "bold"  # bold
+    ) +
+    big_theme
+}
+
+
+# =====================================================
+#  PLOT SET 1: ALL ROWS (Read_count > 250)
+# =====================================================
+plot_cn_vs_conformity(
+  dplyr::filter(qPCR_combined, Read_count > 250),
+  "Copy Number vs Reference Conformity (All samples; Read_count > 250)"
+)
+
+# =====================================================
+#  NEW GROUPS: Copy Number vs Reference Conformity
+#  (all with Read_count > 250)
+# =====================================================
+
+# iSeq076 F0+F1  (Rows 1–24)
+qPCR_iSeq076_F0F1 <- qPCR_combined[1:24, ] %>%
+  dplyr::filter(Read_count > 250)
+
+plot_cn_vs_conformity(
+  qPCR_iSeq076_F0F1,
+  "Copy Number vs Reference Conformity (iSeq076 F0+F1; Read_count > 250)"
+)
+
+# F2  (Rows 27–97 and 171–188)
+qPCR_F2 <- qPCR_combined[c(27:97, 171:188), ] %>%
+  dplyr::filter(Read_count > 250)
+
+plot_cn_vs_conformity(
+  qPCR_F2,
+  "Copy Number vs Reference Conformity (F2; Read_count > 250)"
+)
+
+# iSeq077 PM-F2F0/F1F0  (Rows 107–136)
+qPCR_iSeq077_PMF2F0F1F0 <- qPCR_combined[107:136, ] %>%
+  dplyr::filter(Read_count > 250)
+
+plot_cn_vs_conformity(
+  qPCR_iSeq077_PMF2F0F1F0,
+  "Copy Number vs Reference Conformity (iSeq077 PM-F2F0/F1F0; Read_count > 250)"
+)
+
+# iSeq077 PM-F2WT  (Rows 138–167)
+qPCR_iSeq077_PMF2WT <- qPCR_combined[138:167, ] %>%
+  dplyr::filter(Read_count > 250)
+
+plot_cn_vs_conformity(
+  qPCR_iSeq077_PMF2WT,
+  "Copy Number vs Reference Conformity (iSeq077 PM-F2WT; Read_count > 250)"
+)
+
+
+
+## =====================================================
+##  Libraries
+## =====================================================
+library(readr)
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(ggsignif)
+
+## =====================================================
+##  Load data
+## =====================================================
+qPCR_combined <- read_csv(
+  "~/Library/CloudStorage/OneDrive-UniversityofOtago/2025/qPCR/Combined_qPCR_amplicon_02Dec.csv"
+)
+
+qPCR_combined$I_Proportion <- as.numeric(qPCR_combined$I_Proportion)
+
+## =====================================================
+##  Colour palettes
+## =====================================================
+sex_cols <- c(
+  "Male"   = "#2F3D70",
+  "Female" = "#D04E59",
+  "NA"     = "#FAE093"
+)
+
+mod_cols <- c(
+  "Male modified (<22%)"     = "#2F3D70",
+  "Male unmodified (>94%)"   = "#CABEE9",
+  "Female"                   = "#D04E59"
+)
+
+male_conform_cols <- c(
+  "Modified (<22%)"   = "#2F3D70",
+  "Unmodified (>94%)" = "#CABEE9"
+)
+
+## =====================================================
+##  Theme (extra top margin for sig labels)
+## =====================================================
+big_theme <- theme_minimal(base_size = 16) +
+  theme(
+    plot.title   = element_text(size = 26, face = "bold", hjust = 0.5),
+    axis.title   = element_text(size = 22, face = "bold"),
+    axis.text    = element_text(size = 20, colour = "black"),
+    legend.title = element_text(size = 18, face = "bold"),
+    legend.text  = element_text(size = 16),
+    plot.margin  = margin(t = 60, r = 20, b = 20, l = 20)
+  )
+
+## =====================================================
+##  Helper functions
+## =====================================================
+lm_stats_label <- function(df) {
+  df_use <- df[is.finite(df$I_Proportion) &
+                 !is.na(df$I_Proportion) &
+                 !is.na(df$`Combined estimate`), ]
+  if (nrow(df_use) < 2) return("n too small")
+  
+  fit <- lm(`Combined estimate` ~ I_Proportion, data = df_use)
+  r2 <- summary(fit)$r.squared
+  p  <- summary(fit)$coefficients[2, 4]
+  paste0("R² = ", round(r2, 3), "\n p = ", signif(p, 3))
+}
+
+p_to_star <- function(p) {
+  ifelse(
+    is.na(p), "NS",
+    ifelse(p < 0.0001, "****",
+           ifelse(p < 0.001,  "***",
+                  ifelse(p < 0.01,   "**",
+                         ifelse(p < 0.05,   "*", "NS"))))
+  )
+}
+
+get_pw_p <- function(pmat, g1, g2) {
+  rn <- rownames(pmat)
+  cn <- colnames(pmat)
+  if (g1 %in% rn && g2 %in% cn) return(pmat[g1, g2])
+  if (g2 %in% rn && g1 %in% cn) return(pmat[g2, g1])
+  NA_real_
+}
+
+plot_cn_vs_conformity <- function(df, plot_title) {
+  stats_lab <- lm_stats_label(df)
+  
+  ggplot(df, aes(
+    x = I_Proportion,
+    y = `Combined estimate`,
+    colour = `Sex phenotype`
+  )) +
+    geom_point(size = 3) +
+    geom_smooth(method = "lm", se = FALSE,
+                colour = "black", linewidth = 1.2) +
+    scale_color_manual(values = sex_cols) +
+    scale_x_continuous(limits = c(0, 100)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+    labs(
+      x = "Reference conformity",
+      y = "Copy number",
+      title = plot_title
+    ) +
+    annotate(
+      "text",
+      x = 0,
+      y = max(df$`Combined estimate`, na.rm = TRUE),
+      label = stats_lab,
+      hjust = 0,
+      vjust = 1,
+      size = 8,
+      fontface = "bold"
+    ) +
+    big_theme
+}
+
+## =====================================================
+##  F2 population (rows 27–97 & 171–188, Read_count > 250)
+## =====================================================
+qPCR_F2 <- qPCR_combined[c(27:97, 171:188), ] %>%
+  filter(Read_count > 250)
+
+## =====================================================
+##  FIGURE 1: F2 Males vs Females (y: 0–20)
+## =====================================================
+F2_sex_summary <- qPCR_F2 %>%
+  filter(`Sex phenotype` %in% c("Male", "Female")) %>%
+  group_by(`Sex phenotype`) %>%
+  summarise(
+    mean_copy = mean(`Combined estimate`, na.rm = TRUE),
+    sd_copy   = sd(`Combined estimate`,   na.rm = TRUE),
+    n         = n(),
+    se_copy   = sd_copy / sqrt(n),
+    .groups   = "drop"
+  )
+
+sex_test <- wilcox.test(
+  `Combined estimate` ~ `Sex phenotype`,
+  data = qPCR_F2 %>% filter(`Sex phenotype` %in% c("Male","Female"))
+)
+
+sex_star <- p_to_star(sex_test$p.value)
+
+ggplot(F2_sex_summary,
+       aes(x = `Sex phenotype`, y = mean_copy, fill = `Sex phenotype`)) +
+  geom_col(width = 0.6,
+           colour = "black",
+           size = 1.1,
+           alpha = 0.8) +
+  geom_errorbar(aes(ymin = mean_copy - se_copy,
+                    ymax = mean_copy + se_copy),
+                width = 0.15,
+                linewidth = 1.1) +
+  geom_signif(
+    comparisons = list(c("Male", "Female")),
+    annotations = sex_star,
+    y_position  = 18,   # within 0–20
+    tip_length  = 0.02,
+    size        = 1.5,
+    textsize    = 8
+  ) +
+  scale_fill_manual(values = sex_cols) +
+  scale_y_continuous(limits = c(0, 20),
+                     expand = expansion(mult = c(0, 0))) +
+  labs(
+    x = "",
+    y = "Mean copy number",
+    title = "F2 Copy Number: Males vs Females"
+  ) +
+  big_theme
+
+## =====================================================
+##  FIGURE 2: Female vs Modified vs Unmodified (22% / 94%), y: 0–20
+## =====================================================
+F2_mod_groups <- qPCR_F2 %>%
+  mutate(
+    Mod_group = case_when(
+      `Sex phenotype` == "Male"   & I_Proportion < 22 ~ "Male modified (<22%)",
+      `Sex phenotype` == "Male"   & I_Proportion > 94 ~ "Male unmodified (>94%)",
+      `Sex phenotype` == "Female"                      ~ "Female",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(Mod_group)) %>%
+  mutate(
+    Mod_group = factor(
+      Mod_group,
+      levels = c("Female",
+                 "Male modified (<22%)",
+                 "Male unmodified (>94%)")
+    )
+  )
+
+F2_mod_summary <- F2_mod_groups %>%
+  group_by(Mod_group) %>%
+  summarise(
+    mean_copy = mean(`Combined estimate`, na.rm = TRUE),
+    sd_copy   = sd(`Combined estimate`,   na.rm = TRUE),
+    n         = n(),
+    se_copy   = sd_copy / sqrt(n),
+    .groups   = "drop"
+  )
+
+kw_mod <- kruskal.test(`Combined estimate` ~ Mod_group, data = F2_mod_groups)
+
+pw_mod <- pairwise.wilcox.test(
+  F2_mod_groups$`Combined estimate`,
+  F2_mod_groups$Mod_group,
+  p.adjust.method = "BH"
+)
+
+mat_mod <- pw_mod$p.value
+
+p_f_mmod      <- get_pw_p(mat_mod, "Female",               "Male modified (<22%)")
+p_f_munmod    <- get_pw_p(mat_mod, "Female",               "Male unmodified (>94%)")
+p_mmod_munmod <- get_pw_p(mat_mod, "Male modified (<22%)", "Male unmodified (>94%)")
+
+mod_annotations <- c(
+  p_to_star(p_mmod_munmod),
+  p_to_star(p_f_mmod),
+  p_to_star(p_f_munmod)
+)
+
+ggplot(F2_mod_summary,
+       aes(x = Mod_group, y = mean_copy, fill = Mod_group)) +
+  geom_col(width = 0.6,
+           colour = "black",
+           size = 1.1,
+           alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = mean_copy - se_copy,
+        ymax = mean_copy + se_copy),
+    width = 0.15,
+    linewidth = 1.1
+  ) +
+  geom_signif(
+    comparisons = list(
+      c("Male modified (<22%)", "Male unmodified (>94%)"),
+      c("Male modified (<22%)", "Female"),
+      c("Male unmodified (>94%)", "Female")
+    ),
+    annotations = mod_annotations,
+    y_position  = c(14, 16, 18),  # all within 0–20, stacked
+    size        = 1.5,
+    textsize    = 8,
+    tip_length  = 0.02
+  ) +
+  scale_fill_manual(values = mod_cols) +
+  scale_y_continuous(limits = c(0, 20),
+                     expand = expansion(mult = c(0, 0))) +
+  labs(
+    x = "",
+    y = "Mean copy number",
+    title = "Copy Number by Modification Status (22% / 94% thresholds)"
+  ) +
+  big_theme
+
+## =====================================================
+##  FIGURE 3: Males only – Modified vs Unmodified (22% / 94%), y: 0–20
+## =====================================================
+F2_male_conform <- qPCR_F2 %>%
+  filter(`Sex phenotype` == "Male") %>%
+  mutate(
+    Conform_group = case_when(
+      I_Proportion < 22 ~ "Modified (<22%)",
+      I_Proportion > 94 ~ "Unmodified (>94%)",
+      TRUE              ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(Conform_group)) %>%
+  mutate(
+    Conform_group = factor(
+      Conform_group,
+      levels = c("Modified (<22%)",
+                 "Unmodified (>94%)")
+    )
+  )
+
+F2_male_summary <- F2_male_conform %>%
+  group_by(Conform_group) %>%
+  summarise(
+    mean_copy = mean(`Combined estimate`, na.rm = TRUE),
+    sd_copy   = sd(`Combined estimate`,   na.rm = TRUE),
+    n         = n(),
+    se_copy   = sd_copy / sqrt(n),
+    .groups   = "drop"
+  )
+
+male_test <- wilcox.test(
+  `Combined estimate` ~ Conform_group,
+  data = F2_male_conform
+)
+
+male_star <- p_to_star(male_test$p.value)
+
+ggplot(F2_male_summary,
+       aes(x = Conform_group, y = mean_copy, fill = Conform_group)) +
+  geom_col(width = 0.6,
+           colour = "black",
+           size = 1.1,
+           alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = mean_copy - se_copy,
+        ymax = mean_copy + se_copy),
+    width = 0.15,
+    linewidth = 1.1
+  ) +
+  geom_signif(
+    comparisons = list(
+      c("Modified (<22%)", "Unmodified (>94%)")
+    ),
+    annotations = male_star,
+    y_position  = 18,
+    size        = 1.5,
+    textsize    = 8,
+    tip_length  = 0.02
+  ) +
+  scale_fill_manual(values = male_conform_cols) +
+  scale_y_continuous(limits = c(0, 20),
+                     expand = expansion(mult = c(0, 0))) +
+  labs(
+    x = "",
+    y = "Mean copy number",
+    title = "Male Copy Number by Modification Status (22% / 94%)"
+  ) +
+  big_theme
+
+## =====================================================
+##  Gap calculation (22% / 94% thresholds)
+## =====================================================
+highest_modified_male <- qPCR_F2 %>% 
+  filter(`Sex phenotype` == "Male", I_Proportion < 22) %>% 
+  arrange(desc(I_Proportion)) %>% 
+  slice(1)
+
+lowest_unmodified_male <- qPCR_F2 %>% 
+  filter(`Sex phenotype` == "Male", I_Proportion > 94) %>% 
+  arrange(I_Proportion) %>% 
+  slice(1)
+
+mod_gap <- lowest_unmodified_male$I_Proportion - highest_modified_male$I_Proportion
+
+highest_modified_male
+lowest_unmodified_male
+mod_gap
+
+
+

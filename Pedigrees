@@ -1,0 +1,280 @@
+## ---- Packages ----
+library(readxl)
+library(readr)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(purrr)
+
+## ---- Read ----
+df <- read_excel("Combined_Amplicon.xlsx")
+
+## ---- Sample construction ----
+df <- df %>%
+  mutate(
+    Family_tmp = na_if(Family, ""),
+    Run_tmp    = na_if(Run, ""),
+    Sex_tmp    = na_if(Sex, ""),
+    Indiv_tmp  = na_if(Individual, ""),
+    fam2 = str_sub(Family_tmp, -2),
+    run2 = str_sub(Run_tmp, -2),
+    sex1 = str_sub(Sex_tmp, 1, 1)
+  ) %>%
+  unite("Sample", c(fam2, run2, sex1, Indiv_tmp), sep = "_", na.rm = TRUE) %>%
+  mutate(Sample = if_else(is.na(Run), NA_character_, Sample)) %>%
+  relocate(Sample, .after = 4)
+
+## ---- Coerce numeric-like columns safely ----
+df <- df %>%
+  mutate(
+    across(matches("_(Proportion|Count)$"),
+           ~ parse_number(as.character(.), na = c("NA","N/A","")))
+  )
+
+## ---- Remove NTCs ----
+df_noNTC <- df %>%
+  filter(
+    !(str_detect(toupper(coalesce(Individual, "")), "NTC") |
+        str_detect(toupper(coalesce(Sample, "")), "NTC"))
+  )
+
+# Optional: minimum read depth
+MIN_READS <- 250   # e.g. 100 to apply; NA to skip
+
+df_filtered <- df_noNTC %>%
+  { if (!is.na(MIN_READS)) filter(., is.na(Read_count) | Read_count >= MIN_READS) else . } %>%
+
+
+## ---- Colour map ----
+cats <- c(
+  "I","II","III","IV","II+III","II+III+IV","II+IV","III+IV",
+  "V","VI","IV+V","II+VI","VII","unspecified"
+)
+
+hex  <- c(
+  "#8EE5EE","#986afc","#c46afc","#e129f2","#7a6afc","#ff99cc",
+  "#b56afc","#ff6df2","#ffb90f","#fcb16a","#cd950c","#8b6508",
+  "#dcde73","#808080"
+)
+
+col_map <- setNames(hex, cats)
+
+## ================================================================
+## LONG TABLES PER SIRE + FAMILY
+## ================================================================
+
+long_props_sire <- df_filtered %>%
+  mutate(F0_Sire = as.character(F0_Sire)) %>%
+  select(F0_Sire, Family, Run, Sample, Individual, ends_with("_Proportion")) %>%
+  pivot_longer(
+    ends_with("_Proportion"),
+    names_to = "class",
+    values_to = "prop"
+  ) %>%
+  mutate(
+    class = str_remove(class, "_Proportion$"),
+    class = factor(class, levels = cats)
+  )
+
+## ================================================================
+## GRID LAYOUT: fixed size + proxy families
+## ================================================================
+
+# Fixed number of columns **within each family panel**
+n_cols <- 5
+
+cells <- long_props_sire %>%
+  group_by(F0_Sire, Family, Sample, Individual) %>%
+  summarise(
+    I_prop = sum(prop[class == "I"], na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(I_prop = replace_na(I_prop, 0)) %>%
+  group_by(F0_Sire, Family) %>%
+  arrange(desc(I_prop), .by_group = TRUE) %>%
+  mutate(
+    idx  = row_number(),
+    col  = (idx - 1) %% n_cols + 1,
+    row  = (idx - 1) %/% n_cols + 1
+  ) %>%
+  ungroup()
+
+max_row <- max(cells$row, na.rm = TRUE)
+
+## ================================================================
+## GAPS BETWEEN SAMPLES (NOT WITHIN STACKED CLASSES)
+## ================================================================
+
+padding_x <- 0.04
+padding_y <- 0.04
+
+top5_rects <- long_props_sire %>%
+  filter(!is.na(prop)) %>%
+  inner_join(
+    cells,
+    by = c("F0_Sire","Family","Sample","Individual")
+  ) %>%
+  group_by(F0_Sire, Family, Sample, Individual, col, row) %>%
+  
+  # 1) First: pick the top 5 classes by proportion
+  arrange(desc(prop), .by_group = TRUE) %>%
+  mutate(rank = row_number()) %>%
+  filter(rank <= 5) %>%
+  
+  # 2) Then: within those 5, force Class I to be stacked on top
+  #    (with scale_y_reverse, "top" = first row in this order)
+  mutate(
+    class_priority = if_else(class == "I", 0L, 1L)
+  ) %>%
+  arrange(class_priority, desc(prop), .by_group = TRUE) %>%
+  
+  # 3) Now compute the stacking positions using this new order
+  mutate(
+    prop_top_sum  = sum(prop),
+    prop_norm     = if_else(prop_top_sum > 0, prop / prop_top_sum, 0),
+    ymin_cell     = lag(cumsum(prop_norm), default = 0),
+    ymax_cell     = cumsum(prop_norm),
+    
+    cell_bottom   = row - 1 + padding_y,
+    cell_height   = 1 - 2 * padding_y,
+    
+    ymin          = cell_bottom + ymin_cell * cell_height,
+    ymax          = cell_bottom + ymax_cell * cell_height
+  ) %>%
+  ungroup()
+
+
+
+
+## ================================================================
+## SEX LABELS
+## ================================================================
+
+sex_cells <- df_filtered %>%
+  mutate(F0_Sire = as.character(F0_Sire)) %>%
+  select(F0_Sire, Family, Sample, Individual, Sex) %>%
+  distinct() %>%
+  inner_join(cells %>% mutate(F0_Sire = as.character(F0_Sire)),
+             by = c("F0_Sire","Family","Sample","Individual")) %>%
+  mutate(
+    sex_cat = case_when(
+      is.na(Sex)                       ~ "NA",
+      str_starts(toupper(Sex), "M")    ~ "M",
+      str_starts(toupper(Sex), "F")    ~ "F",
+      TRUE                             ~ "NA"
+    )
+  )
+
+## ================================================================
+## PROXY FAMILIES → consistent number of panels per sire
+## ================================================================
+
+fam_per_sire <- df_filtered %>%
+  mutate(F0_Sire = as.character(F0_Sire)) %>%
+  filter(!is.na(F0_Sire), !is.na(Family)) %>%
+  group_by(F0_Sire) %>%
+  summarise(n_fam = n_distinct(Family), .groups = "drop")
+
+max_fams <- max(fam_per_sire$n_fam)
+
+## ================================================================
+## BUILD PLOTS
+## ================================================================
+
+sire_ids <- sort(unique(top5_rects$F0_Sire))
+
+plots_by_sire <- map(sire_ids, function(sire_id) {
+  
+  df_plot  <- filter(top5_rects, F0_Sire == sire_id)
+  sex_plot <- filter(sex_cells,  F0_Sire == sire_id)
+  
+  sire_fams <- sort(unique(df_plot$Family))
+  n_fams    <- length(sire_fams)
+  
+  if (n_fams < max_fams) {
+    proxy_levels <- paste0("proxy_", seq_len(max_fams - n_fams))
+    df_plot$Family  <- factor(df_plot$Family, levels = c(sire_fams, proxy_levels))
+    sex_plot$Family <- factor(sex_plot$Family, levels = levels(df_plot$Family))
+  } else {
+    df_plot$Family  <- factor(df_plot$Family, levels = sire_fams)
+    sex_plot$Family <- factor(sex_plot$Family, levels = sire_fams)
+  }
+  
+  family_labeller <- function(x) {
+    ifelse(startsWith(as.character(x), "proxy_"), "", as.character(x))
+  }
+  
+  ggplot(df_plot) +
+    geom_rect(
+      aes(
+        xmin = col - 0.5 + padding_x,
+        xmax = col + 0.5 - padding_x,
+        ymin = ymin,
+        ymax = ymax,
+        fill = class
+      ),
+      colour = "black",
+      linewidth = 0.05
+    ) +
+    geom_point(
+      data = sex_plot %>% filter(sex_cat == "M"),
+      aes(x = col, y = row - 0.5, shape = sex_cat),
+      size = 20,       # keep your original size
+      stroke = 0.9,
+      fill = NA,
+      colour = "black"
+    ) + 
+    geom_point(
+      data = sex_plot %>% filter(sex_cat == "F"),
+      aes(x = col, y = row - 0.5, shape = sex_cat),
+      size = 17.5,        # <-- smaller diamond here
+      stroke = 0.9,
+      fill = NA,
+      colour = "black"
+    ) +
+    geom_point(
+      data = sex_plot %>% filter(sex_cat == "NA"),
+      aes(x = col, y = row - 0.5, shape = sex_cat),
+      size = 15,        # <-- smaller diamond here
+      stroke = 0.9,
+      fill = NA,
+      colour = "black"
+    ) +
+    scale_fill_manual(values = col_map, drop = FALSE) +
+    scale_shape_manual(values = c("M"=22,"F"=21,"NA"=23)) +
+    scale_x_continuous(limits = c(0.5, n_cols + 0.5), expand = c(0,0)) +
+    scale_y_reverse(limits = c(max_row, 0), expand = c(0,0)) +
+    coord_equal() +
+    facet_wrap(
+      ~ Family,
+      ncol     = max_fams,
+      drop     = FALSE,
+      labeller = labeller(Family = family_labeller)
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      axis.title  = element_blank(),
+      axis.text   = element_blank(),
+      axis.ticks  = element_blank(),
+      panel.grid  = element_blank()
+    ) +
+    labs(
+      title = paste0(
+        "Top 5 modification classes per individual/sample\n",
+        "F0 Sire ", sire_id, " (cells ordered by Class I proportion)"
+      )
+    )
+})
+
+names(plots_by_sire) <- sire_ids
+
+## Example:
+plots_by_sire[[1]]
+plots_by_sire[[2]]
+plots_by_sire[[3]]
+plots_by_sire[[4]]
+plots_by_sire[[5]]
+plots_by_sire[[6]]
+plots_by_sire[[7]]
+plots_by_sire[[8]]

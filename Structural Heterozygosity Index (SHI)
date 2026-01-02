@@ -153,7 +153,7 @@ sire_cols <- c(
   "#7C7189",  # violet grey
   "#BC8E7D",  # dusty clay
   "#2F3D70",  # deep navy
-  "#4E8DAE"   # steel blue (new)
+  "#4E8DAE"   # steel blue
 )
 
 ## 5) Plot: SHI by sire

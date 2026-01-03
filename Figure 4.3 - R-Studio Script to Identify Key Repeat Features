@@ -1,0 +1,172 @@
+# Load the ShortRead package
+library(ShortRead)
+
+# Define file paths to your FASTQ-formatted .txt files
+file_paths <- c("/Users/conortumulty/Documents/Uni/Research Project/TU_T2T/SRR26468237_1.txt")
+
+# Function to read sequences from FASTQ-formatted .txt files
+read_sequences_from_fastq_txt <- function(file) {
+  fq <- readFastq(file)
+  sequences <- sread(fq)  # Extract sequences
+  return(as.character(sequences))
+}
+
+# Read sequences from the files
+sequences <- sapply(file_paths, read_sequences_from_fastq_txt)
+sequences <- unlist(sequences)
+
+# Identify the 7 longest reads and keep them in their original direction
+sequences <- sequences[order(nchar(sequences), decreasing = TRUE)][1:7]
+
+# Assign new names to sequences
+sequence_names <- c("SRR26468237.
+                    937605", "SRR26468237.
+                    1257201", "SRR26468237.
+                    2002584", 
+                    "SRR26468237.
+                    2358225", "SRR26468237.
+                    1482238", "SRR26468237.
+                    2355486", "SRR26468237.
+                    2041708")
+names(sequences) <- sequence_names
+
+# Get the length of Sequence 2 (the sequence we want to match)
+target_length <- nchar(sequences["SRR26468237.1257201"])
+
+# Trim Sequence 1 from the 5' end to match the length of Sequence 2
+if (nchar(sequences["SRR26468237.937605"]) > target_length) {
+  sequences["SRR26468237.937605"] <- substr(sequences["SRR26468237.937605"], 
+                                            nchar(sequences["SRR26468237.937605"]) - target_length + 1, 
+                                            nchar(sequences["SRR26468237.937605"]))
+}
+
+# Define the motifs and their attributes
+motifs <- c("GGCTTGGGGATAGGGTAAGG", "TTAGGGTTAGGGTTAGGGTTAGGG", "CTATTGCTAGTGGTAATAAAT", "ACTGACCGATCACAGCCAGGC", "GTCGACCTGTGCTTGTAGATC")
+motif_labels <- c("FR", "TR", " ", " ", "Genomic DNA")
+motif_colors <- c("blue", "red", "green", "yellow", "orange")
+
+# Function to find motifs in a sequence
+find_motifs <- function(sequence, motifs, seq_name) {
+  df <- data.frame(sequence = character(),
+                   motif = character(),
+                   start = integer(),
+                   end = integer(),
+                   motif_label = character(),
+                   motif_color = character(),
+                   stringsAsFactors = FALSE)
+  for (i in seq_along(motifs)) {
+    motif <- motifs[i]
+    matches <- gregexpr(motif, sequence, perl = TRUE)[[1]]
+    if (matches[1] != -1) {
+      for (m in matches) {
+        df <- rbind(df, data.frame(sequence = seq_name,
+                                   motif = motif,
+                                   start = m,
+                                   end = m + nchar(motif) - 1,
+                                   motif_label = motif_labels[i],
+                                   motif_color = motif_colors[i]))
+      }
+    }
+  }
+  return(df)
+}
+
+# Find motif positions
+motif_positions <- do.call(rbind, lapply(names(sequences), function(seq_name) {
+  find_motifs(sequences[[seq_name]], motifs = motifs, seq_name = seq_name)
+}))
+
+# Set options to avoid scientific notation
+options(scipen = 999)
+
+# Updated function to plot motifs on sequences with increased margin and smaller font for sequence names
+plot_motifs <- function(motif_positions, sequences, max_x_length = 300000) {
+  # Number of sequences
+  n_seq <- length(sequences)
+  
+  # Set up plot area with a larger left margin and limit x-axis to max_x_length
+  par(mar = c(5, 9, 4, 2) + 0.1)  # Increased the left margin for long sequence names
+  plot(NULL, xlim = c(0, max_x_length), ylim = c(0.5, n_seq + 0.5),
+       xaxt = 'n', yaxt = 'n', xlab = "Position (bp)", ylab = "",
+       main = "stupid fucking figure", bty = "n")
+  
+  # Customize x-axis with reversed labels (starting from the right)
+  axis_positions <- seq(0, max_x_length, by = 50000)
+  axis_labels <- rev(as.character(seq(0, max_x_length, by = 50000)))
+  axis_labels[length(axis_labels)] <- "Telomere"  # Label the rightmost position as 'Telomere'
+  axis(1, at = axis_positions, labels = axis_labels, las = 1, cex.axis = 1.4)
+  
+  # Add new sequence names on y-axis with reduced font size to fit better
+  axis(2, at = 1:n_seq, labels = sequence_names, las = 2, lwd = 0, lwd.ticks = 1, cex.axis = 1.4)  # Reduced font size
+  
+  # Loop over each sequence and plot motifs with specific label height adjustments
+  for (i in 1:n_seq) {
+    seq_name <- names(sequences)[i]
+    seq_motifs <- subset(motif_positions, sequence == seq_name)
+    
+    # Calculate the starting position for the sequence to align to the right
+    seq_length <- nchar(sequences[i])
+    seq_start <- max_x_length - seq_length + 1
+    
+    if (nrow(seq_motifs) > 0) {
+      # Add a grey line for the full length of the sequence
+      lines(c(seq_start, max_x_length), c(i, i), col = "grey", lty = 1, lwd = 2
+      # Plot each motif type with its specific settings
+      for (motif_label in unique(seq_motifs$motif_label)) {
+        these_motifs <- seq_motifs[seq_motifs$motif_label == motif_label, 
+        # For FR motifs, number them only once per 3 kb
+        if (motif_label == "FR") {
+          these_motifs <- these_motifs[order(these_motifs$start), ]
+          last_numbered_position <- -3000  # Keep track of the last position where a number was added
+          number_counter <- 1  # Initialize a separate counter for numbering
+          for (j in 1:nrow(these_motifs)) {
+            motif_start <- seq_start + these_motifs$start[j] - 1
+            motif_end <- seq_start + these_motifs$end[j] - 1
+            segments(motif_start, i, motif_end, i, col = these_motifs$motif_color[j], lwd = 9)
+            # Only label if 3000 bp apart from the last labelled motif
+            if (these_motifs$start[j] - last_numbered_position >= 3000) {
+              text((motif_start + motif_end) / 2, i + 0.25, labels = number_counter, cex = 1.2, pos = 3, col = "blue", font = 2)
+              last_numbered_position <- these_motifs$start[j]
+              number_counter <- number_counter + 1  # Increment the counter
+            }
+          }
+          
+          # For TR motifs, label them as 'Telomere' every 3 kb and move it down by 1 font height
+        } else if (motif_label == "TR") {
+          these_motifs <- these_motifs[order(these_motifs$start), ]
+          last_telomere_position <- -3000  # Track last position where "Telomere" label was added
+          for (j in 1:nrow(these_motifs)) {
+            motif_start <- seq_start + these_motifs$start[j] - 1
+            motif_end <- seq_start + these_motifs$end[j] - 1
+            segments(motif_start, i, motif_end, i, col = these_motifs$motif_color[j], lwd = 9)
+            
+            # Only label "Telomere" if 3000 bp apart from the last labelled TR motif
+            if (these_motifs$start[j] - last_telomere_position >= 100000) {
+              text((motif_start + motif_end) / 2, i - 0.02, labels = "Telomere", cex = 1.2, pos = 3, col = "red", font = 2)  # Move down
+              last_telomere_position <- these_motifs$start[j]
+            }
+          }
+          # Move Genomic DNA label up by 1 font height
+        } else if (motif_label == "Genomic DNA") {
+          for (j in 1:nrow(these_motifs)) {
+            motif_start <- seq_start + these_motifs$start[j] - 1
+            motif_end <- seq_start + these_motifs$end[j] - 1
+            segments(motif_start, i, motif_end, i, col = these_motifs$motif_color[j], lwd = 9)
+            text((motif_start + motif_end) / 2, i + 0.5, labels = motif_label, cex = 1.2, pos = 3, col = "orange", font = 2)  # Move up
+          }
+        } else {
+          # Plot other motifs as before
+          for (j in 1:nrow(these_motifs)) {
+            motif_start <- seq_start + these_motifs$start[j] - 1
+            motif_end <- seq_start + these_motifs$end[j] - 1
+            segments(motif_start, i, motif_end, i, col = these_motifs$motif_color[j], lwd = 9)
+            text((motif_start + motif_end) / 2, i + 0.25, labels = these_motifs$motif_label[j], cex = 1.2, pos = 3, col = these_motifs$motif_color[j], font = 2)
+          }
+        }
+      }
+    }
+  }
+}
+
+# Plot motifs with the updated settings
+plot_motifs(motif_positions, sequences, max_x_length = 300000)

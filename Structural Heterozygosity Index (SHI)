@@ -1,15 +1,32 @@
 ## ================================================================
-##  ADD-ON: Structural heterozygosity index (SHI) by sire
-##  with checkpoints / diagnostics
+##  Structural heterozygosity index (SHI) by sire
+##  + Mendelian\nInheritance comparator (1:2:1)
+##  Publication-ready, with checkpoints / diagnostics
 ## ================================================================
 
-## 1) Long proportions table (per sample; based on df_filtered)
+## ---- Packages ----
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(ggplot2)
+  library(tibble)
+  library(knitr)
+  library(grid)   # for unit()
+})
+
+## ---- Assumptions / inputs ----
+## df_filtered exists and contains:
+##   Run, Sample, Individual, F0_Sire, and columns ending with "_Proportion"
+## cats exists and is the desired class order (character vector)
+
+## ---- 1) Long proportions table (per sample; based on df_filtered) ----
 message("Checkpoint 1: building long_props_raw from df_filtered")
 
 long_props_raw <- df_filtered %>%
   select(Run, Sample, Individual, ends_with("_Proportion")) %>%
   pivot_longer(
-    ends_with("_Proportion"),
+    cols      = ends_with("_Proportion"),
     names_to  = "class",
     values_to = "prop"
   ) %>%
@@ -20,7 +37,6 @@ long_props_raw <- df_filtered %>%
 
 message("  rows in long_props_raw: ", nrow(long_props_raw))
 
-# Quick look at how many classes per sample and the total 'prop' per sample
 checkpoint1_summary <- long_props_raw %>%
   group_by(Sample) %>%
   summarise(
@@ -36,7 +52,7 @@ print(head(checkpoint1_summary))
 message("Range of sum_prop across samples: ",
         paste(range(checkpoint1_summary$sum_prop, na.rm = TRUE), collapse = " to "))
 
-## 2) Normalise proportions within each sample before computing SHI
+## ---- 2) Normalise proportions within each sample before computing SHI ----
 message("Checkpoint 2: normalising proportions within each Sample")
 
 long_props_norm <- long_props_raw %>%
@@ -65,7 +81,7 @@ message("Range of total_prop across samples: ",
 message("Range of sum_p across samples (should be ~1): ",
         paste(range(checkpoint2_summary$sum_p, na.rm = TRUE), collapse = " to "))
 
-## 2b) Collapse class III and III+IV into a single class for SHI
+## ---- 2b) Collapse class III and III+IV into a single class for SHI ----
 message("Checkpoint 2b: collapsing classes III and III+IV for SHI")
 
 long_props_norm_collapsed <- long_props_norm %>%
@@ -76,26 +92,19 @@ long_props_norm_collapsed <- long_props_norm %>%
     )
   )
 
-# Optional quick check
 checkpoint2b_summary <- long_props_norm_collapsed %>%
   group_by(Sample, class_collapsed) %>%
-  summarise(
-    p_sum = sum(p, na.rm = TRUE),
-    .groups = "drop"
-  )
+  summarise(p_sum = sum(p, na.rm = TRUE), .groups = "drop")
 
 message("Checkpoint 2b: example of collapsed p per Sample/class (first 10 rows):")
 print(head(checkpoint2b_summary, 10))
 
-## 3) Compute SHI per Sample (using collapsed classes)
+## ---- 3) Compute SHI per Sample (using collapsed classes) ----
 message("Checkpoint 3: computing SHI per sample with collapsed III / III+IV")
 
 df_shi <- long_props_norm_collapsed %>%
   group_by(Sample, class_collapsed) %>%
-  summarise(
-    p_collapsed = sum(p, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
+  summarise(p_collapsed = sum(p, na.rm = TRUE), .groups = "drop") %>%
   group_by(Sample) %>%
   summarise(
     SHI = 1 - sum(p_collapsed^2, na.rm = TRUE),
@@ -105,12 +114,10 @@ df_shi <- long_props_norm_collapsed %>%
 message("  Number of samples with SHI: ", nrow(df_shi))
 message("  Range of SHI: ",
         paste(range(df_shi$SHI, na.rm = TRUE), collapse = " to "))
-
-# Optional: inspect a few rows
 message("First 6 SHI values:")
 print(head(df_shi))
 
-## 4) Attach sire information (from already-filtered data)
+## ---- 4) Attach sire information ----
 message("Checkpoint 4: joining SHI to F0_Sire")
 
 df_shi_sire <- df_shi %>%
@@ -124,11 +131,8 @@ df_shi_sire <- df_shi %>%
       distinct(),
     by = "Sample"
   ) %>%
-  filter(!is.na(F0_Sire))
-
-df_shi_sire <- df_shi_sire %>%
+  filter(!is.na(F0_Sire)) %>%
   filter(F0_Sire %in% c("11", "15", "19", "29"))
-
 
 checkpoint4_summary <- df_shi_sire %>%
   group_by(F0_Sire) %>%
@@ -142,81 +146,123 @@ checkpoint4_summary <- df_shi_sire %>%
 message("Checkpoint 4 summary by sire:")
 print(checkpoint4_summary)
 
-## ============================
-##  COLOUR PALETTE FOR SIRES
-## ============================
+## ================================================================
+## 5) Add Mendelian comparator group (fabricated 1:2:1 F2 expectation)
+## ================================================================
+## For publication, it’s better to make this EXACTLY 1:2:1 rather than
+## relying on random sampling to approximate 0.25/0.50/0.25.
 
-sire_cols <- c(
-  "#FAE093",  # pastel gold
-  "#D04E59",  # crimson rose
-  "#CABEE9",  # lavender
-  "#7C7189",  # violet grey
-  "#BC8E7D",  # dusty clay
-  "#2F3D70",  # deep navy
-  "#4E8DAE"   # steel blue
-)
+set.seed(1)
+n_expected <- 50
 
-## 5) Plot: SHI by sire
-p_shi_sire <- ggplot(df_shi_sire, aes(
-  x = F0_Sire,
-  y = SHI,
-  fill = F0_Sire       # <-- THIS maps box colours to sire
-)) +
-  geom_boxplot(
-    outlier.shape = NA,
-    colour = "black"
-  ) +
-  geom_jitter(width = 0.15, alpha = 0.5, size = 2) +
-  scale_fill_manual(values = sire_cols) +   # <-- APPLY PALETTE HERE
-  theme_minimal(base_size = 18) +
-  labs(
-    title = "Structural heterozygosity (SHI) by sire",
-    x = "F0 Sire",
-    y = "SHI (1 − Σ pᵢ²)"
+n_xx <- round(n_expected * 0.25)
+n_xy <- round(n_expected * 0.50)
+n_yy <- n_expected - n_xx - n_xy
+
+expected_df <- tibble(
+  Sample   = paste0("EXP_", seq_len(n_expected)),
+  F0_Sire  = "Mendelian\nInheritance",
+  genotype = c(rep("XX", n_xx), rep("XY", n_xy), rep("YY", n_yy))
+) %>%
+  mutate(
+    ## simplest biallelic mapping:
+    ## XX/YY -> SHI ~ 0; XY -> SHI ~ 0.5
+    SHI = if_else(genotype == "XY", 0.5, 0),
+    ## OPTIONAL tiny noise purely to stop boxplot degeneracy (keeps values in [0,1])
+    SHI = pmin(pmax(SHI + rnorm(n_expected, mean = 0, sd = 0.015), 0), 1)
+  ) %>%
+  select(Sample, F0_Sire, SHI)
+
+## bind expected + real
+df_shi_sire_aug <- bind_rows(df_shi_sire, expected_df) %>%
+  mutate(
+    F0_Sire = factor(F0_Sire, levels = c("Mendelian\nInheritance", "11", "15", "19", "29"))
   )
 
-p_shi_sire
+## ================================================================
+## 6) Colours + plotting (publication-ready)
+## ================================================================
+sire_cols_aug <- c(
+  "Mendelian\nInheritance" = "#2F3D70",  # deep navy
+  "11" = "#FAE093",                     # pastel gold
+  "15" = "#D04E59",                     # crimson rose
+  "19" = "#CABEE9",                     # lavender
+  "29" = "#7C7189"                      # violet grey
+)
 
-library(dplyr)
+pub_theme <- theme_minimal(base_size = 18) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(size = 18),
+    axis.text  = element_text(size = 16, colour = "black"),
+    plot.title = element_text(size = 20, face = "bold", hjust = 0),
+    legend.position = "right",
+    legend.key.size = unit(1.2, "cm"),   # bigger keys so colours are clear
+    legend.text     = element_text(size = 16),
+    legend.title    = element_text(size = 16)
+  )
 
-shi_summary <- df_shi_sire %>%
+p_shi_sire_expected <- ggplot(df_shi_sire_aug, aes(x = F0_Sire, y = SHI, fill = F0_Sire)) +
+  geom_boxplot(outlier.shape = NA, colour = "black", linewidth = 0.6) +
+  geom_jitter(width = 0.15, alpha = 0.5, size = 2) +
+  scale_fill_manual(values = sire_cols_aug, drop = FALSE) +
+  guides(fill = guide_legend(override.aes = list(alpha = 1))) +
+  labs(
+    title = "Heterozygosity Index by sire",
+    x = "F0 Sire",
+    y = "Heterozygosity Index (1 − Σ pᵢ²)",
+    fill = NULL
+  ) +
+  pub_theme +
+  scale_y_continuous(
+    breaks = seq(0, 1, by = 0.1),
+    minor_breaks = NULL
+  )
+
+p_shi_sire_expected
+
+
+## ================================================================
+## 7) Summary table (real sires only, plus optional expected row)
+## ================================================================
+
+shi_summary_real <- df_shi_sire %>%
   group_by(F0_Sire) %>%
   summarise(
     n_samples   = n(),
-    mean_SHI    = mean(SHI, na.rm = TRUE),
-    sd_SHI      = sd(SHI, na.rm = TRUE),
-    median_SHI  = median(SHI, na.rm = TRUE),
-    min_SHI     = min(SHI, na.rm = TRUE),
-    max_SHI     = max(SHI, na.rm = TRUE),
+    mean_HI     = mean(SHI, na.rm = TRUE),
+    sd_HI       = sd(SHI, na.rm = TRUE),
+    median_HI   = median(SHI, na.rm = TRUE),
+    min_HI      = min(SHI, na.rm = TRUE),
+    max_HI      = max(SHI, na.rm = TRUE),
     .groups     = "drop"
   ) %>%
-  arrange(F0_Sire)
+  arrange(F0_Sire) %>%
+  mutate(across(c(mean_HI, sd_HI, median_HI, min_HI, max_HI), ~ round(.x, 3)))
 
-shi_summary
-
-shi_summary_print <- shi_summary %>%
-  mutate(
-    across(
-      c(mean_SHI, sd_SHI, median_SHI, min_SHI, max_SHI),
-      ~ round(.x, 3)
-    )
-  )
-
-shi_summary_print
-
-knitr::kable(
-  shi_summary_print,
-  caption = "Structural heterozygosity index (SHI) by sire"
+kable(
+  shi_summary_real,
+  caption = "Heterozygosity Index (HI) by sire"
 )
 
+## Optional: show the Mendelian group summary too (kept separate so it’s explicit)
+shi_summary_expected <- expected_df %>%
+  summarise(
+    n_samples = n(),
+    mean_HI   = round(mean(SHI), 3),
+    sd_HI     = round(sd(SHI), 3),
+    median_HI = round(median(SHI), 3),
+    min_HI    = round(min(SHI), 3),
+    max_HI    = round(max(SHI), 3)
+  )
 
+shi_summary_expected
 
-
-library(dplyr)
-
-high_shi_sire19 <- df_shi_sire %>%
-  filter(F0_Sire == "19", SHI > 0.4) %>%   # sire 19, SHI > 0.4
+## ================================================================
+## 8) Sanity check: high-HI samples in sire 19
+## ================================================================
+high_hi_sire19 <- df_shi_sire %>%
+  filter(F0_Sire == "19", SHI > 0.4) %>%
   arrange(desc(SHI))
 
-high_shi_sire19
-#above is sanity check - confirmed against the raw amplicon data and confirmed these are actually the most heterozygous samples.
+high_hi_sire19
